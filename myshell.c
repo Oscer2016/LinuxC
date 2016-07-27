@@ -14,57 +14,34 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <ctype.h>
 #include <signal.h>
 
 #define normal          0       //一般命令
-#define out_redirect    1       //输出重定向
-#define in_redirect     2       //输入重定向
-#define have_pipe       3       //管道命令
+#define out_redirect_1  1       //输出重定向('>'新建)
+#define out_redirect_2  2       //输出重定向('>>'追加)
+#define in_redirect     3       //输入重定向
+#define have_pipe       4       //管道命令
 
 void my_err(const char *err_string, int line);  //错误处理函数
 void get_pwd(char *pwd);                        //获取当前工作目录
-void print_shell();                             //打印shell提示符
+void print_shell(void);                         //打印shell提示符
 void save_input(char *buf);                     //保存输入的命令
 void draw_input(char *buf, int *argcount, char arglist[][256]);     //提取输入命令
 void do_cmd(int argcount, char arglist[][256]);                     //处理输入命令
 int find_cmd(char *cmd);                                            //查找命令中的可执行程序
+void hpsh(void);                                                    //shell处理
 
 int main(int argc, char *argv[])
 {
-    int i;
-    char arglist[10][256];
-    int argcount = 0;
-    char **arg = NULL;
-    char *buf = (char *)malloc(256);
+    //char **arg = NULL;
 
-    if (buf == NULL) {
-        my_err("malloc",__LINE__);   
-    }
+    signal(SIGINT,SIG_IGN);
     
-    while (1) {
-        memset(buf,0,256);
-        print_shell();
-        save_input(buf);
-        
-        if (strcmp(buf,"exit") == 0 || strcmp(buf,"logout") == 0) {
-            break;
-        }
-        if (strcmp(buf,"") == 0) {
-            continue;
-        }
-        for (i=0; i<10; i++) {
-            arglist[i][0] = '\0';
-        }
-        argcount = 0;
-        draw_input(buf, &argcount, arglist);
-        do_cmd(argcount,arglist);
-    }
+    //signal(SIGINT,SIG_DFL);
 
-    if (buf != NULL) {
-        free(buf);
-        buf = NULL;
-    }
-
+    hpsh();
+    
     exit(0);
 }
 
@@ -94,11 +71,44 @@ void get_pwd(char *pwd)
 }
 
 //输出shell提示符
-void print_shell()
+void print_shell(void)
 {
     char pwd[256];
     get_pwd(pwd);
     printf("\033[01;32mhp@lenovo\033[0m:\033[01;34m%s\033[0m$ ",pwd);
+}
+
+//shell处理
+void hpsh(void)
+{
+    int i;
+    char *buf = (char *)malloc(256);
+    char arglist[10][256];
+    int argcount = 0;
+
+    if (buf == NULL) {
+        my_err("malloc",__LINE__);   
+    }
+	while (1) {
+		memset(buf,0,256);
+		print_shell();
+		save_input(buf);
+		
+		if (strcmp(buf,"exit") == 0 || strcmp(buf,"logout") == 0) {
+		    break;
+		}
+		if (strcmp(buf,"") == 0 ) {
+		    continue;
+		}
+		for (i=0; i<10; i++) {
+		    arglist[i][0] = '\0';
+		}
+		argcount = 0;
+		draw_input(buf, &argcount, arglist);
+		do_cmd(argcount,arglist);
+	}
+
+    free(buf);
 }
 
 //保存输入的命令
@@ -135,7 +145,9 @@ void draw_input(char *buf, int *argcount, char arglist[][256])
     int i = 0, j = 0;
 
     while (buf[i] != '\0') {
-        if (buf[i] != ' ') {
+        //if ( buf[i] != ' ' && (ispunct(buf[i]) == 0) ) {
+        //if ( buf[i] != ' ' && (ispunct(buf[i]) == 0 || buf[i] == '-') ) {
+        if ( buf[i] != ' ' ) {
             arglist[*argcount][j++] = buf[i++];           
         } else {
             while (buf[++i] == ' '){
@@ -147,11 +159,10 @@ void draw_input(char *buf, int *argcount, char arglist[][256])
         }
     }
     arglist[(*argcount)++][j] = '\0';
-    /*
-    printf("%s\n",arglist[0]);
-    printf("%s\n",arglist[1]);
-    printf("%s\n",arglist[2]);
-    */
+    
+    //printf("%s\n",arglist[0]);
+    //printf("%s\n",arglist[1]);
+    //printf("%s\n",arglist[2]);    
 }
 
 //处理输入命令
@@ -189,7 +200,15 @@ void do_cmd(int argcount, char arglist[][256])
     for (i=0; arg[i] != NULL; i++) {
         if (strcmp(arg[i],">") == 0) {
             flag++;
-            other = out_redirect;
+            other = out_redirect_1;
+            if (arg[i+1] == NULL) {
+                flag++;
+            }
+        }
+
+        if (strcmp(arg[i],">>") == 0) {
+            flag++;
+            other = out_redirect_2;
             if (arg[i+1] == NULL) {
                 flag++;
             }
@@ -220,9 +239,18 @@ void do_cmd(int argcount, char arglist[][256])
         exit(0);
     }
 
-    if (other == out_redirect) {
+    if (other == out_redirect_1) {
         for (i=0; arg[i] != NULL; i++) {
             if (strcmp(arg[i],">") == 0) {
+                file = arg[i+1];
+                arg[i] = NULL;
+            }
+        }
+    }
+
+    if (other == out_redirect_2) {
+        for (i=0; arg[i] != NULL; i++) {
+            if (strcmp(arg[i],">>") == 0) {
                 file = arg[i+1];
                 arg[i] = NULL;
             }
@@ -274,9 +302,9 @@ void do_cmd(int argcount, char arglist[][256])
                 exit(0);
             }
             fd = open(file,O_RDWR|O_CREAT|O_TRUNC,0644);
-            printf("%d\n",fd);
             dup2(fd,1);
             execvp(arg[0],arg);
+            close(fd);
             exit(0);
         }
         break;
@@ -286,45 +314,65 @@ void do_cmd(int argcount, char arglist[][256])
                 printf("%s : command not found\n",arg[0]);
                 exit(0);
             }
-            fd = open(file,O_RDONLY);
-            dup2(fd,0);
+            fd = open(file,O_APPEND|O_WRONLY,0644);
+            dup2(fd,1);
             execvp(arg[0],arg);
+            close(fd);
             exit(0);
         }
         break;
     case 3:
         if (pid == 0) {
+            if ( !(find_cmd(arg[0])) ) {
+                printf("%s : command not found\n",arg[0]);
+                exit(0);
+            }
+            fd = open(file,O_RDONLY);
+            dup2(fd,0);
+            execvp(arg[0],arg);
+            close(fd);
+            exit(0);
+        }
+        break;
+    case 4:
+        if (pid == 0) {
             int pid2;
             int status2;
             int fd2;
 
-            if ((pid = fork()) < 0) {
+            if ((pid2 = fork()) < 0) {
                 my_err("fork",__LINE__);
             } else if (pid2 == 0) {
                 if ( !(find_cmd(arg[0])) ) {
                     printf("%s : command not found\n",arg[0]);
                     exit(0);
                 }
-                fd2 = open("/tmp/youdonotkownfile",O_WRONLY|O_CREAT|O_TRUNC,0644);
+                fd2 = open("/tmp/temp",O_WRONLY|O_CREAT|O_TRUNC,0644);
                 dup2(fd2,1);
                 execvp(arg[0],arg);
                 exit(0);
             }
-            if (waitpid(pid2,&status2,0) == -1) {
+            
+            if (waitpid(pid2,&status2,WNOHANG) == -1) {
                 //my_err("waitpid",__LINE__);
-                printf("wait for child process error\n");
+                printf("%d: wait for child process error\n",__LINE__);
             }
+
+            
             if ( !(find_cmd(argnext[0])) ) {
                 printf("%s : command not found\n",argnext[0]);
                 exit(0);
             }
-            fd2 = open("/tmp/youdonotkownfile",O_RDONLY);
+            fd2 = open("/tmp/temp",O_RDONLY);
             dup2(fd2,0);
             execvp(argnext[0],argnext);
 
-            if ( remove("/tmp/youdonotkownfile") ) {
+            
+            if ( remove("/tmp/temp") ) {
                 my_err("remove",__LINE__);
             }
+            
+            close(fd);
             exit(0);
         }
         break;
@@ -334,15 +382,25 @@ void do_cmd(int argcount, char arglist[][256])
 
     //如果命令中有&，表示后台执行，父进程直接返回，不等待子进程结束
     if (background == 1) {
-        printf("[process id %d]\n",pid);
+        printf("[1] %d\n",pid);
         return;
     }
 
     //父进程等待子进程结束
-    if (waitpid(pid,&status,0) == -1){
-        printf("wait for child process error\n");
+    if (waitpid(pid,&status,0) == -1) {
+        printf("%d: wait for child process error\n",__LINE__);
         //my_err("waitpid",__LINE__);
     }
+    /*
+    else if (background == 1) {
+        printf("[1]+ 已完成         ");
+        for (i=0; arg[i] != NULL; i++) {
+            printf("%s ",arg[i]);
+        }
+        printf("\n");
+    }
+    */
+    
 }
     
 
@@ -355,7 +413,7 @@ int find_cmd(char *cmd)
 
     //使当前目录下的程序可以运行
     if (strncmp(cmd,"./",2) == 0) {
-        cmd += 2;
+        cmd = cmd + 2;
     }
 
     //分别在当前目录，/bin和/usr/bin目录查找要执行的程序
