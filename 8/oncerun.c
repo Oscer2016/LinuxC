@@ -29,7 +29,7 @@ void *thread2(void *arg)
 {
     pthread_t thid  = pthread_self();
     printf("2Current thread's ID is %lu\n",thid);
-    //pthread_once(&once, run);
+    pthread_once(&once, run);
     printf("thread2 ends\n");
 }
 
