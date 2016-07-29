@@ -28,6 +28,7 @@ int main(void)
         perror("Process creation failed\n");
         break;
     default:
+        //sleep(3);
         msg = "Parent process is running";
         k = 5;
         break;

@@ -28,6 +28,7 @@ int main(int argc, char **argv)
 
     //获取命令行参数
     mode = atoi(argv[1]);
+
     if (mode > 777 || mode < 0){
         printf("mode num error!\n");
         exit(0);
@@ -37,12 +38,9 @@ int main(int argc, char **argv)
     mode_g = (mode - (mode_u * 100)) / 10;
     mode_o = mode - mode_u * 100 - mode_g * 10;
 
-    if (mode_u > 7 || mode_g > 7 || mode_o > 7){
-        printf("mode num error!\n");
-        exit(0);
-    }
     mode = (mode_u * 8 * 8) + (mode_g * 8) + mode_o;    //八进制转换
     path = argv[2];
+
 
     if ( chmod(path, mode) == -1 ){
         perror("chmod error");
