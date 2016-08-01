@@ -16,6 +16,10 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <signal.h>
+#include <pwd.h>
+#include <sys/utsname.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #define normal          0       //一般命令
 #define out_redirect_1  1       //输出重定向('>'新建)
@@ -23,10 +27,12 @@
 #define in_redirect     3       //输入重定向
 #define have_pipe       4       //管道命令
 
+void handler_sigint(int signo);                 //信号处理函数
 void my_err(const char *err_string, int line);  //错误处理函数
 void get_pwd(char *pwd);                        //获取当前工作目录
 void print_shell(void);                         //打印shell提示符
 void save_input(char *buf);                     //保存输入的命令
+void history(void); 							//记录历史命令
 void draw_input(char *buf, int *argcount, char arglist[][256]);     //提取输入命令
 void do_cmd(int argcount, char arglist[][256]);                     //处理输入命令
 int find_cmd(char *cmd);                                            //查找命令中的可执行程序
@@ -36,7 +42,7 @@ int main(int argc, char *argv[])
 {
     //char **arg = NULL;
 
-    signal(SIGINT,SIG_IGN);
+    signal(SIGINT,handler_sigint);
     
     //signal(SIGINT,SIG_DFL);
 
@@ -44,6 +50,15 @@ int main(int argc, char *argv[])
     
     exit(0);
 }
+
+
+//信号处理函数
+void handler_sigint(int signo)
+{
+    //printf("\n");
+    //print_shell();
+}
+
 
 //错误处理函数
 void my_err(const char *err_string, int line)
@@ -67,16 +82,20 @@ void get_pwd(char *pwd)
             pwd[j] = buf[i];
         }
         pwd[j] = '\0';
+    } else {
+        strcpy(pwd,buf);
     }
 }
 
+/*
 //输出shell提示符
 void print_shell(void)
 {
     char pwd[256];
     get_pwd(pwd);
-    printf("\033[01;32mhp@lenovo\033[0m:\033[01;34m%s\033[0m$ ",pwd);
+    //printf("\033[01;32mhp@lenovo\033[0m:\033[01;34m%s\033[0m$ ",pwd);
 }
+*/
 
 //shell处理
 void hpsh(void)
@@ -91,9 +110,8 @@ void hpsh(void)
     }
 	while (1) {
 		memset(buf,0,256);
-		print_shell();
+		//print_shell();
 		save_input(buf);
-		
 		if (strcmp(buf,"exit") == 0 || strcmp(buf,"logout") == 0) {
 		    break;
 		}
@@ -116,29 +134,62 @@ void save_input(char *buf)
 {
     int len = 0;
     char ch;
+    int fd;
+    char str[500];
+    char *tmp;
+    char pwd[256];
+    char computer[256];
 
-    while (len < 256 && ((ch = getchar()) != '\n')) {
-        buf[len++] = ch;
+    struct passwd *pw;
+    struct utsname uts;
+
+    pw = getpwuid(getuid());
+
+    if (gethostname(computer,255) != 0 || uname(&uts) < 0) {
+        fprintf(stderr,"无法获取主机信息\n");
+        exit(1);
     }
 
-    //命令过长，退出程序
-    if (len == 256) {
-        printf("command is too long...\n");
-        exit(-1);
+    get_pwd(pwd);
+
+    sprintf(str,"\033[01;32m%s@%s\033[0m:\033[01;34m%s\033[0m$ ",pw->pw_name,uts.nodename,pwd);
+    tmp = (char *)malloc(sizeof(256));
+    memset(tmp,0,sizeof(tmp));
+    tmp = readline(str);
+    strcpy(buf,tmp);
+    add_history(buf);
+    free(tmp);
+   
+    fd = open("/tmp/history",O_CREAT|O_RDWR|O_APPEND,0644);
+    if (fd < 0) {
+        perror("open");
+    }
+    if (strlen(buf) != 0) {
+        write(fd,buf,len);
+        write(fd,"\n",1);
     }
 
-    buf[len] = '\0';
-    /*
-    int i;
-    for (i=0; buf[i]!='\0'; i++){
-        printf("%c\n",buf[i]);
-    }
-    for (i=0; buf[i]!='\0'; i++){
-        printf("%d\n",buf[i]);
-    }
-    */
+    close(fd);
 }
 
+void history(void)
+{
+	int i = 0, ret, j;
+    FILE *fp;
+    char history[2000][20];
+
+    fp = fopen("/tmp/history", "r");
+    if (fp == NULL) {
+        perror("fopen");
+        exit(0);
+    }
+    
+    while ( fgets(history[i++],20,fp) ) ;
+    fclose(fp);
+    for (j=0; j<i-1; j++) {
+        printf("    %d    %s",j+1,history[j]);
+    }
+}
 //提取输入命令
 void draw_input(char *buf, int *argcount, char arglist[][256])
 {
@@ -178,12 +229,41 @@ void do_cmd(int argcount, char arglist[][256])
     char *arg[argcount+1];
     char *file;
     pid_t pid;
+    char pwd[256];
+
+    if (strcmp(arglist[0],"ls") == 0) {
+        strcpy(arglist[argcount++],"--color");
+    }
 
     for (i=0; i<argcount; i++) {
         arg[i] = (char *)arglist[i];
     }
     arg[i] = NULL;
     
+    if (strcmp(arg[0],"history") == 0) {
+        history();
+        return;
+    }
+
+    if ( strcmp(arg[0],"cd") == 0 ) {
+        if (arg[1] == NULL || (strcmp(arg[1],"~") == 0) ) {
+            if (chdir("/home/hp") == 0) {
+                return;
+            } else {
+                perror("chdir");
+                return;
+            }
+        }
+        if (arg[2] != NULL) {
+            printf("wrong command\n");
+        } else if (chdir(arg[1]) == 0) {
+            return;
+        } else {
+            perror("chdir");
+            return;
+        }
+    }
+
     for (i=0; i<argcount; i++) {
         if (strncmp(arg[i],"&",1) == 0) {
             if (i == argcount-1) {
@@ -365,8 +445,8 @@ void do_cmd(int argcount, char arglist[][256])
             }
             fd2 = open("/tmp/temp",O_RDONLY);
             dup2(fd2,0);
-            execvp(argnext[0],argnext);
 
+            execvp(argnext[0],argnext);
             
             if ( remove("/tmp/temp") ) {
                 my_err("remove",__LINE__);
@@ -402,7 +482,6 @@ void do_cmd(int argcount, char arglist[][256])
     */
     
 }
-    
 
 //查找命令中的可执行程序
 int find_cmd(char *cmd)
