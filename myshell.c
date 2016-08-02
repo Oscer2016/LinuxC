@@ -30,7 +30,6 @@
 void handler_sigint(int signo);                 //信号处理函数
 void my_err(const char *err_string, int line);  //错误处理函数
 void get_pwd(char *pwd);                        //获取当前工作目录
-void print_shell(void);                         //打印shell提示符
 void save_input(char *buf);                     //保存输入的命令
 void history(void); 							//记录历史命令
 void draw_input(char *buf, int *argcount, char arglist[][256]);     //提取输入命令
@@ -40,25 +39,16 @@ void hpsh(void);                                                    //shell处�
 
 int main(int argc, char *argv[])
 {
-    //char **arg = NULL;
-
-    signal(SIGINT,handler_sigint);
+    signal(SIGINT,handler_sigint);      //使程序不能以“CTRL+C”结束，要结束需按“CTRL+\”
     
-    //signal(SIGINT,SIG_DFL);
-
-    hpsh();
+    hpsh();                             //shell处理
     
     exit(0);
 }
 
-
 //信号处理函数
 void handler_sigint(int signo)
-{
-    //printf("\n");
-    //print_shell();
-}
-
+{}
 
 //错误处理函数
 void my_err(const char *err_string, int line)
@@ -71,14 +61,20 @@ void my_err(const char *err_string, int line)
 //获取当前工作目录
 void get_pwd(char *pwd)
 {
-    int i, j = 0;
+    int i, j = 0, len;
+    char tmp[30] = "/home/";
     char buf[256];
 
     getcwd(buf,256);
+    
+    struct passwd *pw;
+    pw = getpwuid(getuid());
+    strcat(tmp,pw->pw_name);
+    len = strlen(tmp);
 
-    if (strncmp(buf,"/home/hp",8) == 0) {
+    if (strncmp(buf,tmp,len) == 0) {
         pwd[j++] = '~';
-        for (i=8; buf[i] != '\0'; i++,j++) {
+        for (i=len; buf[i] != '\0'; i++,j++) {
             pwd[j] = buf[i];
         }
         pwd[j] = '\0';
@@ -86,16 +82,6 @@ void get_pwd(char *pwd)
         strcpy(pwd,buf);
     }
 }
-
-/*
-//输出shell提示符
-void print_shell(void)
-{
-    char pwd[256];
-    get_pwd(pwd);
-    //printf("\033[01;32mhp@lenovo\033[0m:\033[01;34m%s\033[0m$ ",pwd);
-}
-*/
 
 //shell处理
 void hpsh(void)
@@ -110,22 +96,26 @@ void hpsh(void)
     }
 	while (1) {
 		memset(buf,0,256);
-		//print_shell();
 		save_input(buf);
+        
+        //输入命令是exit或logout，退出shell
 		if (strcmp(buf,"exit") == 0 || strcmp(buf,"logout") == 0) {
 		    break;
 		}
+
+        //如果按下enter键，则只是换行，不处理
 		if (strcmp(buf,"") == 0 ) {
 		    continue;
 		}
+
 		for (i=0; i<10; i++) {
 		    arglist[i][0] = '\0';
 		}
 		argcount = 0;
-		draw_input(buf, &argcount, arglist);
-		do_cmd(argcount,arglist);
-	}
 
+		draw_input(buf, &argcount, arglist);    //提取输入命令
+		do_cmd(argcount,arglist);               //处理输入命令
+	}
     free(buf);
 }
 
@@ -143,8 +133,10 @@ void save_input(char *buf)
     struct passwd *pw;
     struct utsname uts;
 
+    //获取用户名
     pw = getpwuid(getuid());
 
+    //获取主机名
     if (gethostname(computer,255) != 0 || uname(&uts) < 0) {
         fprintf(stderr,"无法获取主机信息\n");
         exit(1);
@@ -153,13 +145,19 @@ void save_input(char *buf)
     get_pwd(pwd);
 
     sprintf(str,"\033[01;32m%s@%s\033[0m:\033[01;34m%s\033[0m$ ",pw->pw_name,uts.nodename,pwd);
+    
     tmp = (char *)malloc(sizeof(256));
     memset(tmp,0,sizeof(tmp));
+    
+    //实现tab补全
     tmp = readline(str);
     strcpy(buf,tmp);
-    add_history(buf);
+    
+    //历史命令可以上下翻
+    add_history(buf);       
     free(tmp);
    
+    //将输入的历史命令存储
     fd = open("/tmp/history",O_CREAT|O_RDWR|O_APPEND,0644);
     if (fd < 0) {
         perror("open");
@@ -172,6 +170,7 @@ void save_input(char *buf)
     close(fd);
 }
 
+//读取历史命令
 void history(void)
 {
 	int i = 0, ret, j;
@@ -190,14 +189,13 @@ void history(void)
         printf("    %d    %s",j+1,history[j]);
     }
 }
-//提取输入命令
+
+//提取输入命令，忽略命令间空格
 void draw_input(char *buf, int *argcount, char arglist[][256])
 {
     int i = 0, j = 0;
 
     while (buf[i] != '\0') {
-        //if ( buf[i] != ' ' && (ispunct(buf[i]) == 0) ) {
-        //if ( buf[i] != ' ' && (ispunct(buf[i]) == 0 || buf[i] == '-') ) {
         if ( buf[i] != ' ' ) {
             arglist[*argcount][j++] = buf[i++];           
         } else {
@@ -210,10 +208,6 @@ void draw_input(char *buf, int *argcount, char arglist[][256])
         }
     }
     arglist[(*argcount)++][j] = '\0';
-    
-    //printf("%s\n",arglist[0]);
-    //printf("%s\n",arglist[1]);
-    //printf("%s\n",arglist[2]);    
 }
 
 //处理输入命令
@@ -230,24 +224,32 @@ void do_cmd(int argcount, char arglist[][256])
     char *file;
     pid_t pid;
     char pwd[256];
+    char tmp[30] = "/home/";
+    struct passwd *pw;
+    pw = getpwuid(getuid());
+    strcat(tmp,pw->pw_name);
 
+    //使ls命令列出的文件带有颜色
     if (strcmp(arglist[0],"ls") == 0) {
         strcpy(arglist[argcount++],"--color");
     }
 
+    //将命令取出
     for (i=0; i<argcount; i++) {
         arg[i] = (char *)arglist[i];
     }
     arg[i] = NULL;
     
+    //如果输入history，列出历史命令（带有序号）
     if (strcmp(arg[0],"history") == 0) {
         history();
         return;
     }
 
+    //cd命令
     if ( strcmp(arg[0],"cd") == 0 ) {
         if (arg[1] == NULL || (strcmp(arg[1],"~") == 0) ) {
-            if (chdir("/home/hp") == 0) {
+            if (chdir(tmp) == 0) {
                 return;
             } else {
                 perror("chdir");
@@ -264,6 +266,7 @@ void do_cmd(int argcount, char arglist[][256])
         }
     }
 
+    //查看命令中是否有后台运行符&
     for (i=0; i<argcount; i++) {
         if (strncmp(arg[i],"&",1) == 0) {
             if (i == argcount-1) {
@@ -314,11 +317,14 @@ void do_cmd(int argcount, char arglist[][256])
         }
     }
 
+    //flag大于1，说明命令中含有多个>,<,>>,|符号，本程序不支持
+    //或者命令格式不对，如“ls -l /tmp >”
     if (flag > 1) {
         printf("wrong command\n");
         exit(0);
     }
 
+    //命令中只有一个输出重定向（>）
     if (other == out_redirect_1) {
         for (i=0; arg[i] != NULL; i++) {
             if (strcmp(arg[i],">") == 0) {
@@ -328,6 +334,7 @@ void do_cmd(int argcount, char arglist[][256])
         }
     }
 
+    //命令中只有一个输出重定向（>>）
     if (other == out_redirect_2) {
         for (i=0; arg[i] != NULL; i++) {
             if (strcmp(arg[i],">>") == 0) {
@@ -337,6 +344,7 @@ void do_cmd(int argcount, char arglist[][256])
         }
     }
 
+    //命令中只有一个输入重定向
     if (other == in_redirect) {
         for (i=0; arg[i] != NULL; i++) {
             if (strcmp(arg[i],"<") == 0) {
@@ -346,6 +354,7 @@ void do_cmd(int argcount, char arglist[][256])
         }
     }
 
+    //命令中只有一个管道符
     if (other == have_pipe) {
         for (i=0; arg[i] != NULL; i++) {
             if (strcmp(arg[i],"|") == 0) {
@@ -365,6 +374,7 @@ void do_cmd(int argcount, char arglist[][256])
     }
 
     switch (other) {
+    //普通命令
     case 0:
         if (pid == 0) {
             if ( !(find_cmd(arg[0])) ) {
@@ -375,6 +385,7 @@ void do_cmd(int argcount, char arglist[][256])
             exit(0);
         }
         break;
+    //含有输出重定向>
     case 1:
         if (pid == 0) {
             if ( !(find_cmd(arg[0])) ) {
@@ -388,6 +399,7 @@ void do_cmd(int argcount, char arglist[][256])
             exit(0);
         }
         break;
+    //含有输出重定向>>
     case 2:
         if (pid == 0) {
             if ( !(find_cmd(arg[0])) ) {
@@ -401,6 +413,7 @@ void do_cmd(int argcount, char arglist[][256])
             exit(0);
         }
         break;
+    //含有输入重定向
     case 3:
         if (pid == 0) {
             if ( !(find_cmd(arg[0])) ) {
@@ -414,6 +427,7 @@ void do_cmd(int argcount, char arglist[][256])
             exit(0);
         }
         break;
+    //含有管道
     case 4:
         if (pid == 0) {
             int pid2;
@@ -469,18 +483,7 @@ void do_cmd(int argcount, char arglist[][256])
     //父进程等待子进程结束
     if (waitpid(pid,&status,0) == -1) {
         printf("%d: wait for child process error\n",__LINE__);
-        //my_err("waitpid",__LINE__);
     }
-    /*
-    else if (background == 1) {
-        printf("[1]+ 已完成         ");
-        for (i=0; arg[i] != NULL; i++) {
-            printf("%s ",arg[i]);
-        }
-        printf("\n");
-    }
-    */
-    
 }
 
 //查找命令中的可执行程序
@@ -512,4 +515,3 @@ int find_cmd(char *cmd)
     }
     return 0;
 }
-
